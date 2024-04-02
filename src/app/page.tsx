@@ -2,7 +2,7 @@
 
 import styles from "./page.module.css";
 
-import { useState } from 'react'
+import { useState, useRef, useEffect, useCallback} from 'react'
 
 export default function Home() {
   // Keep track of the classification result and the model loading status.
@@ -10,20 +10,47 @@ export default function Home() {
   const [ready, setReady] = useState<true | false | null>(null);
   const [inputText, setInputText] = useState('');
 
-  const classify = async (text: string) => {
-    if (!text) return;
-    if (ready === null) setReady(false);
-      // If this is the first time we've made a request, set the ready flag.
-    //if (!ready) setReady(true);
-    // Make a request to the /classify route on the server.
-    const result = await fetch(`/classify?text=${encodeURIComponent(text)}`);
+  // Create a reference to the worker object.
+  const worker = useRef<object | any | null>(null);
 
-    const json = await result.json();
-    
-    setReady(true);
-    setResult(json[0].translation_text);
-   
-  };
+  // We use the `useEffect` hook to set up the worker as soon as the `App` component is mounted.
+  useEffect(() => {
+    if (!worker.current) {
+      // Create the worker if it does not yet exist.
+      worker.current = new Worker(new URL('./worker.js', import.meta.url), {
+        type: 'module'
+      });
+    }
+
+    // Create a callback function for messages from the worker thread.
+    const onMessageReceived = (e: any) => { 
+      switch (e.data.status) {
+        case 'initiate':
+          setReady(false);
+          break;
+        case 'ready':
+          setReady(true);
+          break;
+        case 'complete':
+          console.log('complete', e.data.output)
+          setResult(e.data.output[0]?.translation_text)
+          break;
+      }
+    };
+
+    // Attach the callback function as an event listener.
+    worker.current.addEventListener('message', onMessageReceived);
+
+    // Define a cleanup function for when the component is unmounted.
+    return () => worker.current.removeEventListener('message', onMessageReceived);
+  });
+
+  const classify = useCallback((text: String) => {
+    if (worker.current) {
+      worker.current.postMessage({ text });
+    }
+  }, []);
+
 
   return (
     <main className={styles.main}>
